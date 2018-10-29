@@ -1,0 +1,15 @@
+parent anatool v00_01_00
+defaultqual e17
+
+fcldir product_dir job
+
+product         version
+gcc	            v7_3_0
+cetbuildtools   v7_04_00	-	only_for_build
+end_product_list
+
+qualifier	gcc	notes
+e17:debug	-nq-
+e17:opt		-nq-
+e17:prof	-nq-
+end_qualifier_list
