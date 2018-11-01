@@ -1,4 +1,4 @@
-parent anatool v00_01_00
+parent saturation v00_01_00
 defaultqual e17
 
 fcldir product_dir job

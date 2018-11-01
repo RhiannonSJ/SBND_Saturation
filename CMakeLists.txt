@@ -1,5 +1,5 @@
 # ======================================================================
-#  anatool main build file
+#  saturation main build file
 #
 #  cd .../path/to/build/directory
 #  source .../path/to/mypandoraanalysis/ups/setup_for_development <-d|-p>
@@ -16,7 +16,7 @@
 # use cmake 2.8 or later
 cmake_minimum_required (VERSION 2.8)
 
-project(anatool)
+project(saturation)
 
 # cetbuildtools contains our cmake modules
 SET ( CETBUILDTOOLS_VERSION $ENV{CETBUILDTOOLS_VERSION} )
@@ -42,6 +42,9 @@ cet_report_compiler_flags()
 
 # these are minimum required versions, not the actual product versions
 find_ups_product( art v1_09_00 )
+find_ups_product( larsoft v1_00_00 )
+find_ups_product( nutools v1_00_00 )
+find_ups_product( cetbuildtools v4_14_01 )
 
 # macros for dictionary and simple_plugin
 include(ArtDictionary)
@@ -49,7 +52,7 @@ include(ArtMake)
 include(BuildPlugins)
 
 # source
-add_subdirectory(anatool)
+add_subdirectory(saturation)
 
 # ups - table and config files
 add_subdirectory(ups)

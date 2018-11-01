@@ -1,0 +1,11 @@
+BEGIN_PROLOG
+
+  saturation:
+  {
+    module_type:      "Saturation"
+    GeantModuleLabel: "largeant"
+    TruthModuleLabel: "generator"
+    Ndaughters:        20
+  }
+
+END_PROLOG
