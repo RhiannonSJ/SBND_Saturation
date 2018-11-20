@@ -4,7 +4,7 @@ BEGIN_PROLOG
   {
     module_type:      "Saturation"
     GeantModuleLabel: "largeant"
-    TruthModuleLabel: "generator"
+    TruthModuleLabel: "corsika"
     Ndaughters:        20
   }
 
