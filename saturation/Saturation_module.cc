@@ -21,6 +21,7 @@
 #include "messagefacility/MessageLogger/MessageLogger.h"
 #include "canvas/Persistency/Common/Ptr.h"
 #include "canvas/Persistency/Common/PtrVector.h"
+#include "canvas/Persistency/Common/FindManyP.h"
 #include "cetlib_except/exception.h"
 
 // LArSoft Includes
@@ -73,14 +74,21 @@ namespace larg4 {
   private:
 
     std::string fG4ModuleLabel;     ///< module label for the Geant
-    std::string fTruthModuleLabel;  ///< module label for the Geant
+    std::string fCorsikaModuleLabel;  ///< module label for corkisa
+    std::string fGenieModuleLabel;  ///< module label for Genie
 
     TTree *particle_tree; ///< Tree to hold 45 entries per event for the time, planes and particle types
     TTree *event_tree; ///< Tree to hold 15 entries per event for the time and planes
     unsigned int bTDC; ///< TDC branch
     unsigned int bWire; ///< Wire plane branch
     unsigned int bParticle; ///< Particle branch
-    unsigned int bInteraction; ///< ScatterCode of the event 
+    unsigned int bInteraction; ///< ScatterCode of the event
+    unsigned int bNeutrino; ///< whether the information is for a cosmic track or a neutrino
+    unsigned int bWireNumber; ///< wire number of the deposited charge
+    unsigned int bWiresCrossed; ///< number of collection plane wires crossed by track
+    float bTDCLength; ///< duration in time of track
+    float bTDCStart; ///< start tdc of the track/shower
+    float bTDCBeforeNeutrino; ///< amount of time before the neutrino interaction that the cosmic started
     float bMaxCharge; ///< Max charge branch
     float bEnergy; ///< Energy of the particles we are looking at 
     float bAngle; ///< Angle to the neutrino direction of the particles we are looking at
@@ -135,12 +143,18 @@ namespace larg4 {
     particle_tree->Branch("bEnergy", &bEnergy, "bEnergy/F");
     particle_tree->Branch("bAngle", &bAngle, "bAngle/F");
     particle_tree->Branch("bInteraction", &bInteraction, "bInteraction/i");
+    particle_tree->Branch("bNeutrino", &bNeutrino, "bNeutrino/i");
+    particle_tree->Branch("bWireNumber", &bWireNumber, "bWireNumber/i");
+    particle_tree->Branch("bWiresCrossed", &bWiresCrossed, "bWiresCrossed/i");
+    particle_tree->Branch("bTDCLength", &bTDCLength, "bTDCLength/F");
+    particle_tree->Branch("bTDCStart", &bTDCStart, "bTDCStart/F");
+    particle_tree->Branch("bTDCBeforeNeutrino", &bTDCBeforeNeutrino, "bTDCBeforeNeutrino/F");
     event_tree->Branch("bEventCharge", &bEventCharge, "bEventCharge/F");
     event_tree->Branch("bEventTDC", &bTDC, "bEventTDC/i");
     event_tree->Branch("bEventWire", &bWire, "bEventWire/i");
     event_tree->Branch("bEventInteraction", &bInteraction, "bEventInteraction/i");
 
-    event            = 0;
+    event = 0;
 
     // File to hold interesting events
     file.open("evd.txt");
@@ -155,8 +169,9 @@ namespace larg4 {
   //-----------------------------------------------------------------------
   void Saturation::reconfigure(fhicl::ParameterSet const& p)
   {
-    fG4ModuleLabel    = p.get< std::string >("GeantModuleLabel");
-    fTruthModuleLabel = p.get< std::string >("TruthModuleLabel"); 
+    fG4ModuleLabel      = p.get< std::string >("GeantModuleLabel");
+    fCorsikaModuleLabel = p.get< std::string >("CorsikaModuleLabel"); 
+    fGenieModuleLabel   = p.get< std::string >("GenieModuleLabel"); 
     
     return;
   }
@@ -177,21 +192,44 @@ namespace larg4 {
     std::vector<const sim::SimChannel*> sccol;
     evt.getView(fG4ModuleLabel, sccol);
 
+    // Get the Genie MCTruth information to access the corresponding MCParticle list
+    art::Handle< std::vector< simb::MCTruth > > genHandle;
+    evt.getByLabel(fGenieModuleLabel, genHandle);
+
+    // Get the Corsika MCTruth information to access the corresponding MCParticle list
+    art::Handle< std::vector< simb::MCTruth > > corHandle;
+    evt.getByLabel(fCorsikaModuleLabel, corHandle);
+
     // Get the GTruth information for the interaction codes
     art::Handle< std::vector< simb::GTruth > > gtHandle;
-    evt.getByLabel(fTruthModuleLabel, gtHandle);
+    evt.getByLabel(fGenieModuleLabel, gtHandle);
 
     // Check that the size of GTruth is 1 or 0, and if it is 0 return since 
     // we don't have the required information
-    if(gtHandle->size() == 0) return;
+    if(gtHandle->size() == 0 || genHandle->size() == 0 || corHandle->size() == 0) return;
     if(gtHandle->size() != 1){
       mf::LogWarning("Saturation") << "GTruth size is " << gtHandle->size() << ", should be 0 or 1";
+      return;      
+    }
+    if(genHandle->size() != 1){
+      mf::LogWarning("Saturation") << "Genie MCTruth size is " << genHandle->size() << ", should be 0 or 1";
+      return;      
+    }
+    if(corHandle->size() != 1){
+      mf::LogWarning("Saturation") << "Corsika MCTruth size is " << corHandle->size() << ", should be 0 or 1";
       return;      
     }
 
     // Set the scattering code of the event
     art::Ptr< simb::GTruth > gt( gtHandle, 0 );
     unsigned int scatterCode = gt->fGscatter;
+
+    // Get the vectors of Corsika and Genie MCParticles 
+    art::FindManyP<simb::MCParticle> fgenpart(genHandle, evt, fG4ModuleLabel);
+    art::FindManyP<simb::MCParticle> fcorpart(corHandle, evt, fG4ModuleLabel);
+    std::vector< art::Ptr<simb::MCParticle > > genParticles = fgenpart.at(genHandle[0]);
+    std::vector< art::Ptr<simb::MCParticle > > corParticles = fcorpart.at(corHandle[0]);
+    std::vector< art::Ptr<simb::MCParticle > >::iterator itGen, itCor;
 
     // Define the maximum charge on a wire in an event 
     std::vector< std::vector<float> > max_event_charge;
@@ -284,12 +322,25 @@ namespace larg4 {
             // Loop over IDEs and check there is a track associated with each one
             const std::vector<sim::IDE> idevec = mapitr->second;
             for(size_t iv = 0; iv < idevec.size(); ++iv){
-              if(plist.find( idevec[iv].trackID ) == plist.end() && idevec[iv].trackID != sim::NoParticleId){
-                mf::LogWarning("Saturation") << idevec[iv].trackID << " is not in particle list";
+              itGen = find(genParticles.begin(), genParticles.end(), idevec[iv].trackID); 
+              itCor = find(gcorParticles.begin(), corParticles.end(), idevec[iv].trackID); 
+              if(itGen == genParticles.end() && itCor == corParticles.end() && idevec[iv].trackID != sim::NoParticleId){
+                mf::LogWarning("Saturation") << idevec[iv].trackID << " is not in Genie or Corsika particle lists";
                 continue;
               }
              
               // Get the MCParticle
+              const simb::MCParticle *part;
+              bool isNeutrino = false;
+              // If in the Genie list, set the neutrino integer to be 1
+              if(itGen != genParticles.end()){
+                part = genParticles[idevec[iv].trackID];
+                isNeutrino = true;
+              }
+              // If in the Corsika list, set the neutrino integer to be 0
+              if(itCor != corParticles.end()){
+                part = corParticles[idevec[iv].trackID]; 
+              }
               const simb::MCParticle *part = plist[idevec[iv].trackID];
               TVector3 direction(part->Px()/part->P(), part->Py()/part->P(), part->Pz()/part->P());
               TVector3 z(0,0,1);
@@ -304,6 +355,8 @@ namespace larg4 {
                     charges[i][j][k] += idevec[iv].numElectrons;
                     energy[i][j][k]   = idevec[iv].energy;
                     angle[i][j][k]    = costheta;
+                    if(isNeutrino) neutrino[i][j][k] = 1;
+                    else neutrino[i][j][k] = 0;
                   }
                 }
                 if(k == 1){ // non-MIP, stopping protons
@@ -311,6 +364,8 @@ namespace larg4 {
                     charges[i][j][k] += idevec[iv].numElectrons; 
                     energy[i][j][k]   = idevec[iv].energy;
                     angle[i][j][k]    = costheta;
+                    if(isNeutrino) neutrino[i][j][k] = 1;
+                    else neutrino[i][j][k] = 0;
                   }
                 }
                 if(k == 2){ // Showers, electrons or photons
@@ -318,6 +373,8 @@ namespace larg4 {
                     charges[i][j][k] += idevec[iv].numElectrons; 
                     energy[i][j][k]   = idevec[iv].energy;
                     angle[i][j][k]    = costheta;
+                    if(isNeutrino) neutrino[i][j][k] = 1;
+                    else neutrino[i][j][k] = 0;
                   }
                 }
               }

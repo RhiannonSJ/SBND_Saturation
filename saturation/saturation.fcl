@@ -2,10 +2,11 @@ BEGIN_PROLOG
 
   saturation:
   {
-    module_type:      "Saturation"
-    GeantModuleLabel: "largeant"
-    TruthModuleLabel: "corsika"
-    Ndaughters:        20
+    module_type:        "Saturation"
+    GeantModuleLabel:   "largeant"
+    CorsikaModuleLabel: "corsika"
+    GenieModuleLabel:   "generator"
+    Ndaughters:          20
   }
 
 END_PROLOG
