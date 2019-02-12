@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export FHICL_DIR=${MRB_SOURCE}/analysistree/analysistree
+export FHICL_DIR=${MRB_SOURCE}/saturation/saturation
 cd $MRB_BUILDDIR
 mrbsetenv
 mrb i -j4

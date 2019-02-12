@@ -44,6 +44,8 @@
 
 // C++ Includes
 #include <iostream>
+#include <algorithm>
+#include <vector>
 #include <fstream>
 #include <cstring>
 #include <sys/stat.h>
@@ -58,52 +60,52 @@ namespace sim{
 
 ///Geant4 interface 
 namespace larg4 {  
- 
+
   class Saturation : public art::EDAnalyzer{
-  public:
- 
-    /// Standard constructor and destructor for an FMWK module.
-    explicit Saturation(fhicl::ParameterSet const& pset);
-    virtual ~Saturation();
+    public:
 
-    void analyze (const art::Event& evt); 
-    void beginJob();
-    void endJob();
-    void reconfigure(fhicl::ParameterSet const& pset);
+      /// Standard constructor and destructor for an FMWK module.
+      explicit Saturation(fhicl::ParameterSet const& pset);
+      virtual ~Saturation();
 
-  private:
+      void analyze (const art::Event& evt); 
+      void beginJob();
+      void endJob();
+      void reconfigure(fhicl::ParameterSet const& pset);
 
-    std::string fG4ModuleLabel;     ///< module label for the Geant
-    std::string fCorsikaModuleLabel;  ///< module label for corkisa
-    std::string fGenieModuleLabel;  ///< module label for Genie
+    private:
 
-    TTree *particle_tree; ///< Tree to hold 45 entries per event for the time, planes and particle types
-    TTree *event_tree; ///< Tree to hold 15 entries per event for the time and planes
-    unsigned int bTDC; ///< TDC branch
-    unsigned int bWire; ///< Wire plane branch
-    unsigned int bParticle; ///< Particle branch
-    unsigned int bInteraction; ///< ScatterCode of the event
-    unsigned int bNeutrino; ///< whether the information is for a cosmic track or a neutrino
-    unsigned int bWireNumber; ///< wire number of the deposited charge
-    unsigned int bWiresCrossed; ///< number of collection plane wires crossed by track
-    float bTDCLength; ///< duration in time of track
-    float bTDCStart; ///< start tdc of the track/shower
-    float bTDCBeforeNeutrino; ///< amount of time before the neutrino interaction that the cosmic started
-    float bMaxCharge; ///< Max charge branch
-    float bEnergy; ///< Energy of the particles we are looking at 
-    float bAngle; ///< Angle to the neutrino direction of the particles we are looking at
-    float bEventCharge; ///< Charge accumulated on a wire over the whole event
+      std::string fG4ModuleLabel;     ///< module label for the Geant
+      std::string fCorsikaModuleLabel;  ///< module label for corkisa
+      std::string fGenieModuleLabel;  ///< module label for Genie
 
-    std::vector<unsigned int> tdc_diffs; ///< Vector to hold the standard differences in tdcs for the different time intervals
-    std::vector<geo::PlaneID::PlaneID_t> wire_planes; ///< Vector of plane definitions
-    std::vector<std::string> particle_types; ///< Vector of particle types, MIP, non-MIP, shower
-   
-    // Counters for finding interesting events
-    unsigned int event;
-    unsigned int event_high_mip;
-    unsigned int event_low_shower;
-    
-    std::ofstream file;
+      TTree *corsika_tree;  ///< Cosmic information 
+      TTree *neutrino_tree; ///< Neutrino products information
+      TTree *event_tree;    ///< Event information
+
+      // Multi-TTree variables (particle &/or coriska &/or event)
+      unsigned int bEventId;    ///< Event ID
+      unsigned int bParticleId; ///< ID of the particle to count wires crossed
+      unsigned int bWireNumber; ///< wire number of the deposited charge
+      unsigned int bWirePlane;  ///< wire plane of the deposited charge
+      float bTDCStart;          ///< start tdc of the track/shower
+
+      // Cosmics only
+      float bEnergy;            ///< Energy of the particles we are looking at 
+      float bAngleZ;            ///< Angle to the neutrino direction of the particles we are looking at
+      float bAngleY;            ///< Angle to the vertical of the particles we are looking at
+      float bCharge;            ///< Max charge branch
+
+      // Event only (BNB-only maximum charge on a single wire over the entire event)
+      unsigned int bInteraction;      ///< ScatterCode of the event
+      unsigned int bNeutrinoStartTDC; ///< StartTDC of the neutrino
+
+      // Vectors to carry above variables
+      std::vector<geo::PlaneID::PlaneID_t> wire_planes; ///< Vector of plane definitions
+
+      // Algorithm counters and module variables
+      unsigned int event, valid_neutrino, prior_cosmic, prior_cosmic_muon;
+      std::ofstream file;
   };
 
 } // namespace larg4
@@ -130,39 +132,49 @@ namespace larg4 {
     art::ServiceHandle<art::TFileService> tfs;
     art::ServiceHandle<geo::Geometry> geo;
 
-    tdc_diffs = std::vector<unsigned int>({4, 10, 20, 40, 100});
+    // 1 TDC = 0.5 us
     wire_planes = std::vector<geo::PlaneID::PlaneID_t>({0, 1, 2});
-    particle_types = std::vector<std::string>({"MIP", "non-MIP", "shower"});
 
-    particle_tree = tfs->make<TTree>("particle_tree","Tree to hold saturation information of particles");
+    // Write particle tree too for comparison purposes (overlays)
     event_tree    = tfs->make<TTree>("event_tree","Tree to hold saturation information of events");
-    particle_tree->Branch("bTDC", &bTDC, "bTDC/i");
-    particle_tree->Branch("bWire", &bWire, "bWire/i");
-    particle_tree->Branch("bParticle", &bParticle, "bParticle/i");
-    particle_tree->Branch("bMaxCharge", &bMaxCharge, "bMaxCharge/F");
-    particle_tree->Branch("bEnergy", &bEnergy, "bEnergy/F");
-    particle_tree->Branch("bAngle", &bAngle, "bAngle/F");
-    particle_tree->Branch("bInteraction", &bInteraction, "bInteraction/i");
-    particle_tree->Branch("bNeutrino", &bNeutrino, "bNeutrino/i");
-    particle_tree->Branch("bWireNumber", &bWireNumber, "bWireNumber/i");
-    particle_tree->Branch("bWiresCrossed", &bWiresCrossed, "bWiresCrossed/i");
-    particle_tree->Branch("bTDCLength", &bTDCLength, "bTDCLength/F");
-    particle_tree->Branch("bTDCStart", &bTDCStart, "bTDCStart/F");
-    particle_tree->Branch("bTDCBeforeNeutrino", &bTDCBeforeNeutrino, "bTDCBeforeNeutrino/F");
-    event_tree->Branch("bEventCharge", &bEventCharge, "bEventCharge/F");
-    event_tree->Branch("bEventTDC", &bTDC, "bEventTDC/i");
-    event_tree->Branch("bEventWire", &bWire, "bEventWire/i");
-    event_tree->Branch("bEventInteraction", &bInteraction, "bEventInteraction/i");
+    corsika_tree  = tfs->make<TTree>("corsika_tree","Tree to hold saturation information of cosmics");
+    neutrino_tree = tfs->make<TTree>("neutrino_tree","Tree to hold saturation information of products of the neutrino");
 
-    event = 0;
+    event_tree->Branch("bEventId",          &bEventId,          "bEventId/i");
+    event_tree->Branch("bNeutrinoStartTDC", &bNeutrinoStartTDC, "bNeutrinoStartTDC/i");
+    event_tree->Branch("bInteraction",      &bInteraction,      "bInteraction/i");
 
-    // File to hold interesting events
-    file.open("evd.txt");
-    file << std::setw(20) << " High charge MIP" << std::setw(20) << " High charge shower " << std::setw(20) << " Low charge shower " << std::endl;
+    corsika_tree->Branch("bEventId",    &bEventId,    "bEventId/i");
+    corsika_tree->Branch("bParticleId", &bParticleId, "bParticleId/i");
+    corsika_tree->Branch("bTDCStart",   &bTDCStart,   "bTDCStart/F");
+    corsika_tree->Branch("bCharge",     &bCharge,     "bCharge/F");
+    corsika_tree->Branch("bWirePlane",  &bWirePlane,  "bWirePlane/i");
+    corsika_tree->Branch("bWireNumber", &bWireNumber, "bWireNumber/i");
+    corsika_tree->Branch("bEnergy",     &bEnergy,     "bEnergy/F");
+    corsika_tree->Branch("bAngleZ",     &bAngleZ,     "bAngleZ/F");
+    corsika_tree->Branch("bAngleY",     &bAngleY,     "bAngleY/F");
+
+    neutrino_tree->Branch("bEventId",    &bEventId,    "bEventId/i");
+    neutrino_tree->Branch("bParticleId", &bParticleId, "bParticleId/i");
+    neutrino_tree->Branch("bTDCStart",   &bTDCStart,   "bTDCStart/F");
+    neutrino_tree->Branch("bCharge",     &bCharge,     "bCharge/F");
+    neutrino_tree->Branch("bWirePlane",  &bWirePlane,  "bWirePlane/i");
+    neutrino_tree->Branch("bWireNumber", &bWireNumber, "bWireNumber/i");
+
+    event             = 0;
+    valid_neutrino    = 0;
+    prior_cosmic      = 0;
+    prior_cosmic_muon = 0;
+
+    file.open("studies.txt");
   }
   //-----------------------------------------------------------------------
   void Saturation::endJob()
   {
+    std::cout << " Number of events : " << event << std::endl;
+    std::cout << " Events with 1 valid neutrino, and possibility for prior cosmics  : " << valid_neutrino    << std::endl;
+    std::cout << " Events with 1 valid neutrino, and at least one prior cosmic      : " << prior_cosmic      << std::endl;
+    std::cout << " Events with 1 valid neutrino, and at least one prior cosmic muon : " << prior_cosmic_muon << std::endl;
     file.close();
   }
 
@@ -172,14 +184,15 @@ namespace larg4 {
     fG4ModuleLabel      = p.get< std::string >("GeantModuleLabel");
     fCorsikaModuleLabel = p.get< std::string >("CorsikaModuleLabel"); 
     fGenieModuleLabel   = p.get< std::string >("GenieModuleLabel"); 
-    
+
     return;
   }
 
   //-----------------------------------------------------------------------
   void Saturation::analyze(const art::Event& evt) 
   {
-  
+
+    // Increment
     event++;
 
     //get the list of particles from this event
@@ -206,17 +219,18 @@ namespace larg4 {
 
     // Check that the size of GTruth is 1 or 0, and if it is 0 return since 
     // we don't have the required information
+    // Currently not bothered about pileup
     if(gtHandle->size() == 0 || genHandle->size() == 0 || corHandle->size() == 0) return;
     if(gtHandle->size() != 1){
-      mf::LogWarning("Saturation") << "GTruth size is " << gtHandle->size() << ", should be 0 or 1";
+      mf::LogWarning("Saturation") << "GTruth size is " << gtHandle->size() << ", only looking at events with a single neutrino";
       return;      
     }
     if(genHandle->size() != 1){
-      mf::LogWarning("Saturation") << "Genie MCTruth size is " << genHandle->size() << ", should be 0 or 1";
+      mf::LogWarning("Saturation") << "Genie MCTruth size is " << genHandle->size() << ", only looing at events with a single neutrino";
       return;      
     }
-    if(corHandle->size() != 1){
-      mf::LogWarning("Saturation") << "Corsika MCTruth size is " << corHandle->size() << ", should be 0 or 1";
+    if(corHandle->size() < 1){
+      mf::LogWarning("Saturation") << "Corsika MCTruth size is " << corHandle->size() << ", need at least 1 cosmic for the study";
       return;      
     }
 
@@ -227,207 +241,218 @@ namespace larg4 {
     // Get the vectors of Corsika and Genie MCParticles 
     art::FindManyP<simb::MCParticle> fgenpart(genHandle, evt, fG4ModuleLabel);
     art::FindManyP<simb::MCParticle> fcorpart(corHandle, evt, fG4ModuleLabel);
-    std::vector< art::Ptr<simb::MCParticle > > genParticles = fgenpart.at(genHandle[0]);
-    std::vector< art::Ptr<simb::MCParticle > > corParticles = fcorpart.at(corHandle[0]);
-    std::vector< art::Ptr<simb::MCParticle > >::iterator itGen, itCor;
 
-    // Define the maximum charge on a wire in an event 
-    std::vector< std::vector<float> > max_event_charge;
+    std::vector< art::Ptr<simb::MCParticle> > genParticles = fgenpart.at(0);
+    std::vector< art::Ptr<simb::MCParticle> > corParticles = fcorpart.at(0);
 
-    // Vector to find the maximum charge on any wire in the time intervals
-    std::vector< std::vector< std::vector<float> > > max_charges;
-    std::vector< std::vector< std::vector<float> > > max_energy;
-    std::vector< std::vector< std::vector<float> > > max_angle;
+    // Need at least 1 neutrino product in the event
+    if(genParticles.size() == 0) return;
 
-    // For the time ranges
-    //    0 = 2us, 1 = 5us, 2 = 10us, 3 = 20us, 4 = 50us
-    for(unsigned int i = 0; i < tdc_diffs.size(); ++i){
-      // Temp vector of vectors of float (wire planes)
-      std::vector< std::vector<float> > temp_wire;
-      std::vector<float> temp_event_wire;
-      for(unsigned int j = 0; j < wire_planes.size(); ++j){
-        // Temporary vector of float (particle type)
-        std::vector<float> temp_particle;
-        for(unsigned int k = 0; k < particle_types.size(); ++k){
-          temp_particle.push_back(-std::numeric_limits<float>::max());
-        }
-        temp_wire.push_back(temp_particle);
-        temp_event_wire.push_back(-std::numeric_limits<float>::max());
-      }
-      max_charges.push_back(temp_wire);
-      max_energy.push_back(temp_wire);
-      max_angle.push_back(temp_wire);
-      max_event_charge.push_back(temp_event_wire);
+    // Vector to hold the smallest TDC's given by products of the neutrino interaction
+    // in the event
+    // This way we can find the first recorded TDC of the neutrino event and set
+    // the cosmic search 400us before that (800TDC)
+    std::vector<unsigned short> smallest_neutrino_tdcs;
+
+    file << "-----------------------------------" << std::endl;
+
+    if(!sccol.size()) {
+      mf::LogWarning("Saturation") << "No SimChannels";
+      return;
     }
 
     // Loop over all the sim channels to find various charge-based things
     for(size_t sc = 0; sc < sccol.size(); ++sc){
 
-      // Define a temporary charge vector for the current channel, to be compared
-      // to the maximum at the end of the loop, initialize with 0
-      std::vector< std::vector< std::vector<float> > > charges;
-      std::vector< std::vector< std::vector<float> > > energy;
-      std::vector< std::vector< std::vector<float> > > angle;
-
-      // The total charge on the current wire is 0 so far
-      std::vector< std::vector<float> > event_charge;
-
-      // For the time ranges
-      //    0 = 2us, 1 = 5us, 2 = 10us, 3 = 20us, 4 = 50us
-      for(unsigned int i = 0; i < tdc_diffs.size(); ++i){
-        // Temp vector of vectors of float (wire planes)
-        std::vector< std::vector<float> > zero_wire;
-        std::vector<float> zero_event_wire;
-        for(unsigned int j = 0; j < wire_planes.size(); ++j){
-          // Temporary vector of float (particle type)
-          std::vector<float> zero_particle;
-          for(unsigned int k = 0; k < particle_types.size(); ++k){
-            zero_particle.push_back(0);
-          }
-          zero_wire.push_back(zero_particle);
-          zero_event_wire.push_back(0);
-        }
-        charges.push_back(zero_wire);
-        energy.push_back(zero_wire);
-        angle.push_back(zero_wire);
-        event_charge.push_back(zero_event_wire);
-      }
-
       // Get the plane ID of the current channel
-      raw::ChannelID_t channel        = sccol[sc]->Channel();
-      std::vector<geo::WireID> wires  = geom->ChannelToWire(channel);
-      geo::PlaneID::PlaneID_t planeID = wires.front().planeID().deepestIndex();
+      //raw::ChannelID_t channel        = sccol[sc]->Channel();
 
       // Get the map between TDCs and IDEs, ordered by increasing TDC
       const auto & tdcidemap    = sccol[sc]->TDCIDEMap();
 
-      // Get the start TDC for the channel to use when finding the relative end tdcs 
-      // for the different time intervals
-      unsigned int start_tdc    = tdcidemap.front().first;
+      // Loop over the map of TDC to IDE
+      for(auto mapitr = tdcidemap.begin(); mapitr != tdcidemap.end(); mapitr++){
+
+        // Get the TDC and the vector of IDEs
+        //const unsigned int tdc = static_cast<unsigned int>(mapitr->first);
+
+        // Looking at the neutrinos
+        // Loop over IDEs and check there is a track associated with each one
+        const std::vector<sim::IDE> idevec = mapitr->second;
+        for(size_t iv = 0; iv < idevec.size(); ++iv){
+          if(plist.find(idevec[iv].trackID) == plist.end() && idevec[iv].trackID != sim::NoParticleId){
+            mf::LogWarning("Saturation") << idevec[iv].trackID << " is not in particle list";
+            continue;
+          }
+
+          // Get the current particle from the back tracker
+          const simb::MCParticle *part = plist.at(idevec[iv].trackID);
+
+          // Get the MCTruth information from the particle
+          art::Ptr<simb::MCTruth> currentTruth = pi_serv->ParticleToMCTruth_P(part);
+
+          // Make sure we are looking at the neutrino
+          //if(currentTruth->Origin() != simb::kBeamNeutrino) continue;
+          if(currentTruth->Origin() == simb::kBeamNeutrino){
+
+            // Get the start TDC for the channel to use when finding the relative end tdcs 
+            // for the different time intervals
+            // .front() returns the smallest TDC value for the simchannel 
+            // .back() returns the largest TDC value for the simchannel
+            smallest_neutrino_tdcs.push_back(mapitr->first);
+          }
+        }// IDE vector
+      }// TDCIDEMap
+    }// SimChannels
+    // Find the smallest TDC given by the neutrino part of the event
+    file << " Event                 : " << event << std::endl;
+    if(!smallest_neutrino_tdcs.size()) {
+      mf::LogWarning("Saturation") << "There are no neutrino TDCs in the event";
+      return;
+    }
+    unsigned short smallest_neutrino_tdc = *std::min_element(begin(smallest_neutrino_tdcs), end(smallest_neutrino_tdcs));
+    if(smallest_neutrino_tdc == 0){
+      mf::LogWarning("Saturation") << "Smallest neutrino TDC is 0, so the cosmics cannot have been recorded before this";
+      return;
+    }
+    valid_neutrino++;
+
+    unsigned short valid_cosmic      = 0;
+    unsigned short valid_cosmic_muon = 0;
+
+    // If we have found a neutrino with a start TDC greater than 0 then look for the cosmics which have come before it
+    for(size_t sc = 0; sc < sccol.size(); ++sc){
+
+      // Get the plane ID of the current channel
+      raw::ChannelID_t channel        = sccol[sc]->Channel();
+      std::vector<geo::WireID> wires  = geom->ChannelToWire(channel);             
+      geo::PlaneID::PlaneID_t planeID = wires.front().planeID().deepestIndex();  
+      
+      // Only looking at the collection plane
+      if(planeID != 2) continue;
+
+      // Get the map between TDCs and IDEs, ordered by increasing TDC
+      const auto & tdcidemap    = sccol[sc]->TDCIDEMap();
 
       // Loop over the map of TDC to IDE
       for(auto mapitr = tdcidemap.begin(); mapitr != tdcidemap.end(); mapitr++){
+
         // Get the TDC and the vector of IDEs
-        const unsigned int tdc = static_cast<unsigned int>(mapitr->first);
-        
-        // Loop over each of the defined time ranges
-        for(unsigned int i = 0; i < tdc_diffs.size(); ++i){
-          // If we are outside of the current range, continue
-          if(tdc >= start_tdc + tdc_diffs[i]) continue;
+        //const unsigned int tdc = static_cast<unsigned int>(mapitr->first);
 
-          for(unsigned int j = 0; j < wire_planes.size(); ++j){
-            // If the channel is not on the current wire, continue
-            if(planeID != wire_planes[j]) continue;
+        // Looking at the cosmics
+        // Loop over IDEs and check there is a track associated with each one
+        const std::vector<sim::IDE> idevec = mapitr->second;
+        for(size_t iv = 0; iv < idevec.size(); ++iv){
+          if(plist.find(idevec[iv].trackID) == plist.end() && idevec[iv].trackID != sim::NoParticleId){
+            mf::LogWarning("Saturation") << idevec[iv].trackID << " is not in particle list";
+            continue;
+          }
 
-            // Loop over IDEs and check there is a track associated with each one
-            const std::vector<sim::IDE> idevec = mapitr->second;
-            for(size_t iv = 0; iv < idevec.size(); ++iv){
-              itGen = find(genParticles.begin(), genParticles.end(), idevec[iv].trackID); 
-              itCor = find(gcorParticles.begin(), corParticles.end(), idevec[iv].trackID); 
-              if(itGen == genParticles.end() && itCor == corParticles.end() && idevec[iv].trackID != sim::NoParticleId){
-                mf::LogWarning("Saturation") << idevec[iv].trackID << " is not in Genie or Corsika particle lists";
-                continue;
-              }
-             
-              // Get the MCParticle
-              const simb::MCParticle *part;
-              bool isNeutrino = false;
-              // If in the Genie list, set the neutrino integer to be 1
-              if(itGen != genParticles.end()){
-                part = genParticles[idevec[iv].trackID];
-                isNeutrino = true;
-              }
-              // If in the Corsika list, set the neutrino integer to be 0
-              if(itCor != corParticles.end()){
-                part = corParticles[idevec[iv].trackID]; 
-              }
-              const simb::MCParticle *part = plist[idevec[iv].trackID];
+          // Get the current particle from the back tracker
+          const simb::MCParticle *part = plist.at(idevec[iv].trackID);
+
+          // Get the MCTruth information from the particle
+          art::Ptr<simb::MCTruth> currentTruth = pi_serv->ParticleToMCTruth_P(part);
+
+          // Having determined that we are looking at an event with a valid neutrino and some prior cosmics, start writing information to the root output
+
+          if(currentTruth->Origin() == simb::kCosmicRay){
+            // If the cosmic TDC is between 
+            // (The smallest neutrino tdc - 800) & the smallest neutrino TDC
+            // Call it a valid cosmic
+            if(mapitr->first < smallest_neutrino_tdc && mapitr->first > (smallest_neutrino_tdc - 2000)){
+              valid_cosmic++;
+            
+              if(part->PdgCode() != 13) continue;
+              valid_cosmic_muon++;
+
               TVector3 direction(part->Px()/part->P(), part->Py()/part->P(), part->Pz()/part->P());
               TVector3 z(0,0,1);
-              double costheta = direction.Dot(z);
+              TVector3 y(0,1,0);
+              double costhetaZ = direction.Dot(z);
+              double costhetaY = direction.Dot(y);
 
-              // If we have the particle, check if it is one of the desired types 
-              // and then calculate the charge accumulated on the wire
-              for(unsigned int k = 0; k < particle_types.size(); ++k){
-                // For MIPs, look for pdgcodes = 211, -211 or 13
-                if(k == 0){ // MIP, muons or pions
-                  if(part->PdgCode() == 211 || part->PdgCode() == -211 || part->PdgCode() == 13){
-                    charges[i][j][k] += idevec[iv].numElectrons;
-                    energy[i][j][k]   = idevec[iv].energy;
-                    angle[i][j][k]    = costheta;
-                    if(isNeutrino) neutrino[i][j][k] = 1;
-                    else neutrino[i][j][k] = 0;
-                  }
-                }
-                if(k == 1){ // non-MIP, stopping protons
-                  if(part->PdgCode() == 2212){
-                    charges[i][j][k] += idevec[iv].numElectrons; 
-                    energy[i][j][k]   = idevec[iv].energy;
-                    angle[i][j][k]    = costheta;
-                    if(isNeutrino) neutrino[i][j][k] = 1;
-                    else neutrino[i][j][k] = 0;
-                  }
-                }
-                if(k == 2){ // Showers, electrons or photons
-                  if(part->PdgCode() == 11 || part->PdgCode() == 22){
-                    charges[i][j][k] += idevec[iv].numElectrons; 
-                    energy[i][j][k]   = idevec[iv].energy;
-                    angle[i][j][k]    = costheta;
-                    if(isNeutrino) neutrino[i][j][k] = 1;
-                    else neutrino[i][j][k] = 0;
-                  }
-                }
-              }
-              // Fill the event_charge vector for the current wire plane and tdc tick 
-              event_charge[i][j] += idevec[iv].numElectrons;
-            }
-          }
-        }
-      }
-
-      // Set the maximum charges and respective energies and angles
-      for(unsigned int i = 0; i < tdc_diffs.size(); ++i){
-        for(unsigned int j = 0; j < wire_planes.size(); ++j){
-          for(unsigned int k = 0; k < particle_types.size(); ++k){
-            if(charges[i][j][k] > max_charges[i][j][k]){
-              max_charges[i][j][k] = charges[i][j][k];
-              max_energy[i][j][k]  = energy[i][j][k];
-              max_angle[i][j][k]   = angle[i][j][k];
-            }
-          }
-          if(event_charge[i][j] > max_event_charge[i][j])
-            max_event_charge[i][j] = event_charge[i][j];
-        }
-      }
+              bEventId       = event;
+              bParticleId    = part->TrackId();
+              bCharge        = idevec[iv].numElectrons;
+              bEnergy        = idevec[iv].energy;
+              bAngleY        = costhetaY;
+              bAngleZ        = costhetaZ;
+              bWireNumber    = channel;
+              bWirePlane     = planeID;
+              bTDCStart      = tdcidemap.front().first;
+              corsika_tree->Fill();
+            } // Valid cosmic
+          } // Cosmic rays
+        } // IDE vector
+      } // TDC - IDE map
     } // SimChannels
-    for(unsigned int i = 0; i < tdc_diffs.size(); ++i){
-      for(unsigned int j = 0; j < wire_planes.size(); ++j){
-        if(max_event_charge[i][j] > 0){
-          bEventCharge = max_event_charge[i][j];
-          bTDC = tdc_diffs[i];
-          bWire = wire_planes[j];
-          bInteraction = scatterCode;
-          event_tree->Fill();
-        }
-        for(unsigned int k = 0; k < particle_types.size(); ++k){
-          if(max_charges[i][j][k] > 0){
-            bParticle = k;
-            bMaxCharge = max_charges[i][j][k];
-            bEnergy = max_energy[i][j][k];
-            bAngle  = max_angle[i][j][k];
-            particle_tree->Fill();
-
-            // High charge MIP
-            if(max_charges[i][j][k] * 1.6e-19 * 1e15 > 250 && k == 0)
-              file << std::setw(8) << event << std::setw(8) << max_charges[i][j][k] * 1.6e-19 *1e15 << std::setw(4) << j << std::setw(20) << " " << std::setw(20) << " " << std::endl;
-            if(max_charges[i][j][k] * 1.6e-19 * 1e15 >= 100 && k == 2)
-              file << std::setw(20) << " " << std::setw(8) << event << std::setw(8) << max_charges[i][j][k] * 1.6e-19 *1e15 << std::setw(4) << j << std::setw(20) << " " << std::endl;
-            if(max_charges[i][j][k] * 1.6e-19 * 1e15 > 50 && max_charges[i][j][k] * 1e-19 * 1e15 < 100 && k == 2)
-              file << std::setw(20) << " " << std::setw(20) << " " << std::setw(8) << event << std::setw(8) << max_charges[i][j][k] * 1.6e-19 *1e15 << std::setw(4) << j << std::endl;
-          }
-        }
-      }
+    if(valid_cosmic == 0){
+      mf::LogWarning("Saturation") << "There are no cosmic TDCs before the neutrino interaction in the event";
+      return;
     }
+    prior_cosmic++;
+    if(valid_cosmic_muon == 0){
+      mf::LogWarning("Saturation") << "There are no cosmic muon TDCs before the neutrino interaction in the event";
+      return;
+    }
+    prior_cosmic_muon++;
+    
+    // If we have found a neutrino with a start TDC greater than 0 then look for the cosmics which have come before it
+    for(size_t sc = 0; sc < sccol.size(); ++sc){
+
+      // Get the plane ID of the current channel
+      raw::ChannelID_t channel        = sccol[sc]->Channel();
+      std::vector<geo::WireID> wires  = geom->ChannelToWire(channel);             
+      geo::PlaneID::PlaneID_t planeID = wires.front().planeID().deepestIndex();  
+
+      // Get the map between TDCs and IDEs, ordered by increasing TDC
+      const auto & tdcidemap    = sccol[sc]->TDCIDEMap();
+
+      // Loop over the map of TDC to IDE
+      for(auto mapitr = tdcidemap.begin(); mapitr != tdcidemap.end(); mapitr++){
+
+        // Get the TDC and the vector of IDEs
+        //const unsigned int tdc = static_cast<unsigned int>(mapitr->first);
+
+        // Looking at the cosmics
+        // Loop over IDEs and check there is a track associated with each one
+        const std::vector<sim::IDE> idevec = mapitr->second;
+        for(size_t iv = 0; iv < idevec.size(); ++iv){
+          if(plist.find(idevec[iv].trackID) == plist.end() && idevec[iv].trackID != sim::NoParticleId){
+            mf::LogWarning("Saturation") << idevec[iv].trackID << " is not in particle list";
+            continue;
+          }
+
+          // Get the current particle from the back tracker
+          const simb::MCParticle *part = plist.at(idevec[iv].trackID);
+
+          // Get the MCTruth information from the particle
+          art::Ptr<simb::MCTruth> currentTruth = pi_serv->ParticleToMCTruth_P(part);
+
+          // Make sure we are looking at the neutrino now
+          if(currentTruth->Origin() != simb::kBeamNeutrino) continue;
+          
+          // Only look at primary neutrino final state particles 
+          // Don't want to look at elements (high pdgcode)
+          if(part->Process() != "primary" || part->PdgCode() >= 1000018039) continue;
+
+          // Write to the neutrino tree
+          bEventId       = event;
+          bParticleId    = part->TrackId();
+          bCharge        = idevec[iv].numElectrons;
+          bWireNumber    = channel;
+          bWirePlane     = planeID;
+          bTDCStart      = tdcidemap.front().first;
+          neutrino_tree->Fill();
+        } // IDE vector
+      } // TDC - IDE map
+    } // SimChannels
+    bEventId          = event;
+    bNeutrinoStartTDC = smallest_neutrino_tdc;
+    bInteraction      = scatterCode;
+    event_tree->Fill();
   } // analyze
 } // namespace larg4
 
